@@ -579,6 +579,20 @@ function App() {
     }
   };
 
+  const handleSignOut = () => {
+    setAuthUser(null);
+    setPendingDownload(false);
+    setShowAuthGate(false);
+    setAuthError("");
+    setAuthMessage("");
+    setOtpRequested(false);
+    setOtpCode("");
+    setDemoOtpCode("");
+    if (window.google?.accounts?.id?.disableAutoSelect) {
+      window.google.accounts.id.disableAutoSelect();
+    }
+  };
+
   return (
     <div className="app">
       <div className="sidebar">
@@ -647,7 +661,12 @@ function App() {
         <div className="inputBox">
           <p className="input-heading">{currentMode.title}</p>
           {mode === "resume_builder" && authUser && (
-            <p className="auth-badge">Signed in as {authUser.email || authUser.name}</p>
+            <div className="auth-row">
+              <p className="auth-badge">Signed in as {authUser.email || authUser.name}</p>
+              <button className="attach-btn auth-signout" onClick={handleSignOut}>
+                Sign out
+              </button>
+            </div>
           )}
           <textarea
             placeholder={currentMode.placeholder}
