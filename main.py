@@ -33,6 +33,24 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER).strip()
+CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS", "").strip()
+
+
+def _allowed_origins():
+    defaults = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://internpilot-kappa.vercel.app",
+    ]
+    if not CORS_ORIGINS_ENV:
+        return defaults
+
+    extra = [o.strip() for o in CORS_ORIGINS_ENV.split(",") if o.strip()]
+    merged = []
+    for origin in defaults + extra:
+        if origin not in merged:
+            merged.append(origin)
+    return merged
 
 
 def _smtp_configured():
@@ -72,10 +90,7 @@ def _send_otp_email(recipient_email: str, otp_code: str):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
