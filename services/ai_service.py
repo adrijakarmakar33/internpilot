@@ -3,49 +3,125 @@ import re
 COMMON_SKILLS = [
     "Python","Java","React","SQL","FastAPI","AWS",
     "Docker","Digital Marketing","SEO",
-    "Leadership","Communication","Teamwork"
+    "Leadership","Communication","Teamwork",
+    "Corporate Law","Legal Research","Contract Drafting","Compliance",
+    "Litigation","Negotiation","Due Diligence","Arbitration",
+    "Accounting","Financial Analysis","Auditing","Taxation",
+    "Sales","Customer Service","Human Resources","Recruitment",
+    "Supply Chain","Operations","Project Management","Risk Management"
 ]
 
 async def analyze_resume(text:str):
-    skills=[s for s in COMMON_SKILLS if s.lower() in text.lower()]
-    return {"skills":skills}
+    known = [s for s in COMMON_SKILLS if s.lower() in text.lower()]
+    inferred = _extract_general_keywords(text, limit=18)
+    merged = []
+    seen = set()
+    for item in known + inferred:
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return {"skills": merged[:20]}
 
 async def analyze_job(text:str):
-    skills=[s for s in COMMON_SKILLS if s.lower() in text.lower()]
-    return {"required_skills":skills}
+    skills = _extract_role_keywords(text, limit=14)
+    if not skills:
+        skills = _extract_general_keywords(text, limit=10)
+    role_title = _extract_role_title(text)
+    role_family = _detect_role_family(text, role_title)
+    return {"required_skills": skills, "role_title": role_title, "role_family": role_family}
 
 def calculate_match(resume_data,job_data):
-    r=set(resume_data["skills"])
-    j=set(job_data["required_skills"])
-    if not j: return 0
-    return int(len(r.intersection(j))/len(j)*100)
+    job_skills = list(dict.fromkeys(job_data["required_skills"]))
+    if not job_skills:
+        return 0
+    matched = get_matched_skills(resume_data, job_data)
+    return int(len(matched) / len(job_skills) * 100)
 
 def detect_skill_gap(resume_data,job_data):
-    r=set(resume_data["skills"])
-    j=set(job_data["required_skills"])
-    return list(j-r)
+    matched = set(get_matched_skills(resume_data, job_data))
+    job_skills = list(dict.fromkeys(job_data["required_skills"]))
+    return [skill for skill in job_skills if skill not in matched]
 
-def generate_improvement_suggestions(missing):
+
+def _normalize_skill(skill: str):
+    cleaned = re.sub(r"[^a-z0-9\s]+", " ", (skill or "").lower())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _is_skill_match(resume_skill: str, job_skill: str):
+    r = _normalize_skill(resume_skill)
+    j = _normalize_skill(job_skill)
+    if not r or not j:
+        return False
+    if r == j:
+        return True
+    if r in j or j in r:
+        return True
+    # token-overlap fallback for variants like "Corporate Law" vs "Law"
+    r_tokens = set(r.split())
+    j_tokens = set(j.split())
+    return len(r_tokens.intersection(j_tokens)) > 0
+
+
+def get_matched_skills(resume_data, job_data):
+    resume_skills = resume_data.get("skills", [])
+    job_skills = list(dict.fromkeys(job_data.get("required_skills", [])))
+    matched = []
+    for js in job_skills:
+        if any(_is_skill_match(rs, js) for rs in resume_skills):
+            matched.append(js)
+    return matched
+
+def generate_improvement_suggestions(missing, role_title: str = ""):
     if not missing:
         return ["Your resume matches the job requirements well."]
-    return [f"Improve {m}" for m in missing]
+    intro = f"To improve fit for {role_title}, focus on:" if role_title else "To improve fit, focus on:"
+    items = [f"Strengthen {m} with one project or proof point." for m in missing[:5]]
+    return [intro] + items
 
-def generate_career_roadmap(missing):
+def generate_career_roadmap(missing, role_title: str = ""):
     if not missing:
         return ["Build advanced projects and prepare for interviews."]
     roadmap=[]
     for m in missing:
-        roadmap.append(f"Learn {m}")
-        roadmap.append(f"Build project using {m}")
+        roadmap.append(f"Learn {m} fundamentals relevant to {role_title or 'target role'}.")
+        roadmap.append(f"Build one portfolio artifact demonstrating {m}.")
     return roadmap
 
-def generate_interview_questions(skills):
-    questions=[]
-    for s in skills[:3]:
-        questions.append(f"Explain your experience with {s}.")
+def generate_interview_questions(skills, role_title: str = "", role_family: str = "general"):
+    role_prefix = role_title or "this role"
+    questions = []
+    for s in skills[:4]:
+        if role_family in {"legal", "finance", "hr", "marketing", "operations"}:
+            questions.append(f"For {role_prefix}, explain how you applied {s} in a real work scenario.")
+        else:
+            questions.append(f"For {role_prefix}, explain your practical experience with {s}.")
+
+    if role_family == "legal":
+        questions.append("Describe a contract review where you identified risk and how you mitigated it.")
+        questions.append("How do you stay updated with regulatory changes relevant to this role?")
+    elif role_family == "finance":
+        questions.append("Walk through a financial analysis you performed and the business decision it informed.")
+        questions.append("How do you validate data accuracy before presenting financial insights?")
+    elif role_family == "marketing":
+        questions.append("Describe a campaign you optimized and which metrics improved.")
+        questions.append("How do you approach audience segmentation and messaging testing?")
+    elif role_family == "hr":
+        questions.append("Explain how you handled a difficult hiring or employee-relations scenario.")
+        questions.append("What metrics do you use to evaluate recruitment effectiveness?")
+    elif role_family == "software":
+        questions.append("Describe a production issue you debugged and the root-cause fix.")
+        questions.append("How do you balance code quality, delivery speed, and scalability?")
+    elif role_family == "data":
+        questions.append("Explain an analysis where your insights changed a business decision.")
+        questions.append("How do you choose the right metric and validate it is trustworthy?")
+
     if not questions:
         questions=["Tell me about yourself."]
-    return questions
+    return questions[:6]
 
 STOPWORDS = {
     "the", "and", "for", "with", "that", "this", "from", "have", "has",
@@ -60,7 +136,8 @@ RESUME_KEYWORD_STOPWORDS = STOPWORDS.union(
         "ability", "preferred", "plus", "minimum", "years", "year", "work", "working",
         "strong", "excellent", "knowledge", "understanding", "proficiency", "familiarity",
         "responsible", "including", "across", "within", "build", "building", "develop",
-        "developing", "internship", "intern", "entry", "level",
+        "developing", "internship", "intern", "entry", "level", "looking", "seeking", "hiring",
+        "candidate", "profile", "position", "must", "should", "need", "required",
     }
 )
 
@@ -84,6 +161,39 @@ def _tokenize(text: str):
         if normalized:
             cleaned.append(normalized)
     return [t for t in cleaned if len(t) > 2 and t not in STOPWORDS]
+
+
+def _extract_general_keywords(text: str, limit: int = 12):
+    tokens = _tokenize(text)
+    freq = {}
+    for token in tokens:
+        if token in RESUME_KEYWORD_STOPWORDS:
+            continue
+        if token.isdigit():
+            continue
+        if len(token) < 3:
+            continue
+        freq[token] = freq.get(token, 0) + 1
+
+    ranked_tokens = sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))
+    aliases = {
+        "apis": "API",
+        "api": "API",
+        "aws": "AWS",
+        "seo": "SEO",
+        "sql": "SQL",
+        "etl": "ETL",
+        "ui": "UI",
+        "ux": "UX",
+        "hr": "HR",
+    }
+    output = []
+    for token, _ in ranked_tokens:
+        cleaned = aliases.get(token, token.capitalize())
+        output.append(cleaned)
+        if len(output) >= limit:
+            break
+    return output
 
 
 def _split_question_and_answer(raw: str):
@@ -115,6 +225,16 @@ def _first_nonempty_line(text: str):
 
 def _extract_role_title(job_text: str):
     lowered = job_text.lower()
+    pattern_hiring = re.search(
+        r"(?:hiring|looking\s+for|seeking|need(?:ed)?)\s+(?:an?\s+)?([a-z][a-z\s\-&/]{2,60}?)(?:\s+(?:with|for|to|who)\b|[.,;\n]|$)",
+        lowered,
+        flags=re.IGNORECASE,
+    )
+    if pattern_hiring:
+        phrase = pattern_hiring.group(1).strip(" -")
+        if phrase:
+            return " ".join(word.capitalize() for word in phrase.split())
+
     explicit = re.search(
         r"(?:job\s*title|title|position|role)\s*[:\-]\s*([^\n\r,|]+)",
         job_text,
@@ -128,6 +248,9 @@ def _extract_role_title(job_text: str):
         "data analyst", "data scientist", "machine learning engineer", "product manager",
         "business analyst", "digital marketing specialist", "seo specialist", "qa engineer",
         "devops engineer", "cloud engineer", "ui ux designer", "cybersecurity analyst",
+        "corporate lawyer", "lawyer", "legal associate", "legal counsel",
+        "chartered accountant", "accountant", "financial analyst",
+        "hr executive", "human resources executive", "operations manager",
     ]
     for hint in title_hints:
         if hint in lowered:
@@ -137,6 +260,25 @@ def _extract_role_title(job_text: str):
     if first_line:
         return first_line.strip(" -|:")
     return "Target Role Candidate"
+
+
+def _detect_role_family(job_text: str, role_title: str = ""):
+    lowered = f"{job_text} {role_title}".lower()
+    if any(k in lowered for k in ["law", "lawyer", "legal", "litigation", "compliance", "contract"]):
+        return "legal"
+    if any(k in lowered for k in ["finance", "account", "audit", "tax", "analyst", "fp&a"]):
+        return "finance"
+    if any(k in lowered for k in ["marketing", "seo", "campaign", "brand", "growth"]):
+        return "marketing"
+    if any(k in lowered for k in ["recruit", "human resources", "hr", "talent", "people ops"]):
+        return "hr"
+    if any(k in lowered for k in ["data scientist", "data analyst", "bi", "analytics", "machine learning"]):
+        return "data"
+    if any(k in lowered for k in ["engineer", "developer", "software", "backend", "frontend", "devops", "cloud"]):
+        return "software"
+    if any(k in lowered for k in ["operations", "supply chain", "procurement", "logistics"]):
+        return "operations"
+    return "general"
 
 
 def _extract_role_keywords(job_text: str, limit: int = 14):
@@ -167,8 +309,14 @@ def _extract_role_keywords(job_text: str, limit: int = 14):
     }
     inferred = []
     seen_lower = {k.lower() for k in known}
+    known_parts = set()
+    for item in known:
+        for part in item.lower().split():
+            known_parts.add(part)
     for token, _ in ranked_tokens:
         normalized_token = token.strip(".")
+        if normalized_token in known_parts:
+            continue
         cleaned = aliases.get(normalized_token, normalized_token.capitalize())
         if cleaned.lower() in seen_lower:
             continue
@@ -178,7 +326,7 @@ def _extract_role_keywords(job_text: str, limit: int = 14):
             break
 
     combined = known + inferred
-    return combined[:limit] if combined else ["Python", "SQL", "Communication", "Problem Solving"]
+    return combined[:limit]
 
 
 def _bucket_skills(keywords):
@@ -352,6 +500,7 @@ async def generate_resume_reference(
     portfolio: str = "",
 ):
     role_title = _extract_role_title(job_text)
+    role_family = _detect_role_family(job_text, role_title)
     role_keywords = _extract_role_keywords(job_text)
     skill_buckets = _bucket_skills(role_keywords)
 
@@ -366,36 +515,178 @@ async def generate_resume_reference(
         summary = f"{summary} Background context to incorporate: {profile_text.strip()}"
 
     tech_skills = skill_buckets["technical"] or role_keywords[:8]
-    core_skills = skill_buckets["core"] or ["Communication", "Collaboration", "Problem Solving"]
+    role_core_defaults = {
+        "legal": ["Legal Writing", "Client Communication", "Risk Assessment"],
+        "finance": ["Analytical Thinking", "Attention to Detail", "Stakeholder Communication"],
+        "marketing": ["Campaign Planning", "Audience Insight", "Communication"],
+        "hr": ["Stakeholder Management", "Communication", "Conflict Resolution"],
+        "operations": ["Process Discipline", "Coordination", "Problem Solving"],
+    }
+    core_skills = skill_buckets["core"] or role_core_defaults.get(role_family, ["Communication", "Collaboration", "Problem Solving"])
 
-    experience_bullets = [
-        f"Executed {role_title.lower()} responsibilities using {tech_skills[0]} and {tech_skills[1] if len(tech_skills) > 1 else tech_skills[0]} to deliver scoped milestones on schedule.",
-        "Converted ambiguous requirements into implementation plans, prioritized deliverables, and maintained quality through testing and peer review.",
-        "Communicated progress, risks, and tradeoffs with stakeholders, improving delivery predictability and team alignment.",
-    ]
-    if len(tech_skills) > 2:
-        experience_bullets.append(
-            f"Used {tech_skills[2]} to improve performance, reliability, or reporting quality and document repeatable best practices."
-        )
+    work_samples_label = "PROJECTS"
+    education_hint = "B.S. / B.Tech in Relevant Discipline"
+    experience_bullets = []
+    projects = []
 
-    projects = [
-        {
-            "title": f"{role_title} Capstone Project",
-            "bullets": [
-                f"Built an end-to-end solution aligned to JD priorities, integrating {tech_skills[0]} and {tech_skills[1] if len(tech_skills) > 1 else tech_skills[0]}.",
-                "Defined success metrics early, then iterated on architecture and implementation to improve measurable outcomes.",
-                "Presented project decisions, business impact, and next-step roadmap in recruiter-friendly case-study format.",
-            ],
-        },
-        {
-            "title": "Automation and Impact Tracking Project",
-            "bullets": [
-                "Automated repetitive workflows to reduce manual effort and improve turnaround time for recurring tasks.",
-                "Implemented dashboards or reporting views to track quality, adoption, and performance trends.",
-                f"Applied core skills in {', '.join(core_skills[:2])} to collaborate across functions and close delivery gaps.",
-            ],
-        },
-    ]
+    if role_family == "legal":
+        work_samples_label = "CASEWORK / LEGAL MATTERS"
+        education_hint = "LL.B / LL.M / Relevant Legal Qualification"
+        experience_bullets = [
+            "Drafted and reviewed contracts, identifying legal and commercial risk clauses with clear mitigation notes.",
+            "Conducted legal research and prepared concise briefs for internal teams and client communication.",
+            "Supported compliance checks and due-diligence documentation with accurate, deadline-driven execution.",
+        ]
+        projects = [
+            {
+                "title": "Contract Review and Risk Flagging Dossier",
+                "bullets": [
+                    "Prepared clause-by-clause contract review summaries for business stakeholders.",
+                    "Highlighted liability, indemnity, and termination risks with practical fallback language.",
+                    "Maintained issue tracker for negotiation rounds and closure status.",
+                ],
+            },
+            {
+                "title": "Regulatory Compliance Tracker",
+                "bullets": [
+                    "Built periodic compliance checklist mapped to applicable legal requirements.",
+                    "Documented non-compliance observations and remediation follow-up actions.",
+                    "Presented concise updates for audit/legal leadership reviews.",
+                ],
+            },
+        ]
+    elif role_family == "finance":
+        work_samples_label = "ANALYSIS HIGHLIGHTS"
+        education_hint = "B.Com / M.Com / CA / CFA / Finance Degree"
+        experience_bullets = [
+            "Performed financial analysis on cost, revenue, and variance trends to support business decisions.",
+            "Prepared reconciliations and reporting packs with high accuracy and timeline discipline.",
+            "Collaborated with stakeholders to explain assumptions, risks, and financial implications.",
+        ]
+        projects = [
+            {
+                "title": "Financial Performance Analysis Pack",
+                "bullets": [
+                    "Built month-on-month and variance analysis to identify major movement drivers.",
+                    "Summarized findings into management-ready insights and recommended actions.",
+                    "Improved report consistency using standardized templates and checks.",
+                ],
+            },
+            {
+                "title": "Budget vs Actual Monitoring Model",
+                "bullets": [
+                    "Tracked budget utilization and flagged early risk signals.",
+                    "Documented deviations with root-cause notes and mitigation options.",
+                    "Supported planning reviews with scenario-based commentary.",
+                ],
+            },
+        ]
+    elif role_family == "hr":
+        work_samples_label = "HR INITIATIVES"
+        education_hint = "MBA HR / BBA / Human Resources Degree"
+        experience_bullets = [
+            "Managed recruitment coordination, interview scheduling, and candidate communication workflows.",
+            "Maintained hiring tracker and improved turnaround visibility for stakeholders.",
+            "Supported onboarding and employee engagement activities with structured execution.",
+        ]
+        projects = [
+            {
+                "title": "Recruitment Funnel Optimization",
+                "bullets": [
+                    "Mapped funnel drop-offs and proposed process improvements.",
+                    "Improved candidate follow-up consistency through SLA-based tracking.",
+                    "Reported role-wise hiring status with actionable bottleneck insights.",
+                ],
+            },
+            {
+                "title": "Onboarding Experience Playbook",
+                "bullets": [
+                    "Standardized onboarding checklist for smoother first-week experience.",
+                    "Collected feedback and improved handoff between HR and managers.",
+                    "Reduced early-stage confusion through clear documentation.",
+                ],
+            },
+        ]
+    elif role_family == "marketing":
+        work_samples_label = "CAMPAIGN HIGHLIGHTS"
+        education_hint = "Marketing / Business / Communications Degree"
+        experience_bullets = [
+            "Planned and executed campaign tasks across channels with performance tracking.",
+            "Analyzed CTR, conversion, and engagement metrics to optimize messaging.",
+            "Worked with creative/content teams to improve campaign output quality and consistency.",
+        ]
+        projects = [
+            {
+                "title": "Campaign Optimization Case",
+                "bullets": [
+                    "Tested audience and messaging variants to improve performance.",
+                    "Tracked funnel metrics and summarized learnings for next sprint.",
+                    "Documented budget-impact tradeoffs for stakeholder decisions.",
+                ],
+            },
+            {
+                "title": "SEO and Content Growth Plan",
+                "bullets": [
+                    "Performed keyword mapping and on-page recommendations.",
+                    "Reviewed ranking trends and updated content priorities accordingly.",
+                    "Presented traffic-impact opportunities with execution roadmap.",
+                ],
+            },
+        ]
+    elif role_family == "operations":
+        work_samples_label = "PROCESS IMPROVEMENT HIGHLIGHTS"
+        education_hint = "Operations / Supply Chain / Business Degree"
+        experience_bullets = [
+            "Mapped workflows and removed bottlenecks to improve turnaround time and quality.",
+            "Defined SOP checkpoints and monitored adherence with issue-tracking.",
+            "Coordinated cross-team dependencies to improve delivery reliability.",
+        ]
+        projects = [
+            {
+                "title": "Workflow Efficiency Improvement",
+                "bullets": [
+                    "Analyzed process stages and identified delay/root-cause patterns.",
+                    "Implemented prioritization and handoff improvements.",
+                    "Reported cycle-time improvements with before/after comparison.",
+                ],
+            },
+            {
+                "title": "Service Quality Monitoring Sheet",
+                "bullets": [
+                    "Built KPI tracking for defects, delays, and escalation volumes.",
+                    "Defined corrective action log and ownership model.",
+                    "Improved follow-through consistency across teams.",
+                ],
+            },
+        ]
+    else:
+        experience_bullets = [
+            f"Executed {role_title.lower()} responsibilities using {tech_skills[0]} and {tech_skills[1] if len(tech_skills) > 1 else tech_skills[0]} to deliver scoped milestones on schedule.",
+            "Converted ambiguous requirements into implementation plans, prioritized deliverables, and maintained quality through testing and peer review.",
+            "Communicated progress, risks, and tradeoffs with stakeholders, improving delivery predictability and team alignment.",
+        ]
+        if len(tech_skills) > 2:
+            experience_bullets.append(
+                f"Used {tech_skills[2]} to improve performance, reliability, or reporting quality and document repeatable best practices."
+            )
+        projects = [
+            {
+                "title": f"{role_title} Capstone Project",
+                "bullets": [
+                    f"Built an end-to-end solution aligned to JD priorities, integrating {tech_skills[0]} and {tech_skills[1] if len(tech_skills) > 1 else tech_skills[0]}.",
+                    "Defined success metrics early, then iterated on architecture and implementation to improve measurable outcomes.",
+                    "Presented project decisions, business impact, and next-step roadmap in recruiter-friendly case-study format.",
+                ],
+            },
+            {
+                "title": "Automation and Impact Tracking Project",
+                "bullets": [
+                    "Automated repetitive workflows to reduce manual effort and improve turnaround time for recurring tasks.",
+                    "Implemented dashboards or reporting views to track quality, adoption, and performance trends.",
+                    f"Applied core skills in {', '.join(core_skills[:2])} to collaborate across functions and close delivery gaps.",
+                ],
+            },
+        ]
 
     guidance = [
         "Replace placeholders with real achievements, including quantifiable metrics (%, time saved, revenue, accuracy, scale).",
@@ -432,6 +723,7 @@ async def generate_resume_reference(
             "technical": tech_skills,
             "core": core_skills,
         },
+        "work_samples_label": work_samples_label,
         "experience": [
             {
                 "role": f"{role_title} Intern / Project Contributor",
@@ -443,7 +735,7 @@ async def generate_resume_reference(
         "projects": projects,
         "education": [
             {
-                "degree": "B.S. / B.Tech in Relevant Discipline",
+                "degree": education_hint,
                 "institute": "Your University",
                 "year": "Expected YYYY",
             }
@@ -503,7 +795,7 @@ def format_resume_reference(reference: dict):
             lines.append(f"- {bullet}")
         lines.append("")
 
-    lines.append("PROJECTS")
+    lines.append(reference.get("work_samples_label", "PROJECTS"))
     for project in reference.get("projects", []):
         lines.append(project.get("title", ""))
         for bullet in project.get("bullets", []):
@@ -665,17 +957,42 @@ def simulate_recruiter_review(reference: dict, job_text: str):
 
 def generate_role_variants(reference: dict, job_text: str):
     base_summary = reference.get("summary", "")
-    tech = reference.get("skills_grouped", {}).get("technical", reference.get("skills", []))
     role_title = _extract_role_title(job_text)
+    role_family = _detect_role_family(job_text, role_title)
+    skills = reference.get("skills", [])
     variants = []
 
-    tracks = [
+    role_tracks = {
+        "legal": [
+            ("Corporate Counsel Variant", ["Corporate Law", "Contract Drafting", "Compliance"], "Corporate Counsel"),
+            ("Compliance Variant", ["Compliance", "Due Diligence", "Regulatory Affairs"], "Compliance Associate"),
+            ("Dispute Resolution Variant", ["Litigation", "Arbitration", "Negotiation"], "Legal Associate"),
+        ],
+        "finance": [
+            ("Financial Analyst Variant", ["Financial Analysis", "Accounting", "Reporting"], "Financial Analyst"),
+            ("Audit Variant", ["Auditing", "Compliance", "Risk Management"], "Audit Associate"),
+            ("FP&A Variant", ["Financial Analysis", "Forecasting", "Budgeting"], "FP&A Analyst"),
+        ],
+        "marketing": [
+            ("Performance Marketing Variant", ["Campaign", "SEO", "Analytics"], "Performance Marketer"),
+            ("Brand Variant", ["Brand", "Content", "Communication"], "Brand Associate"),
+            ("Growth Variant", ["Growth", "Funnel", "Conversion"], "Growth Analyst"),
+        ],
+        "hr": [
+            ("Talent Acquisition Variant", ["Recruitment", "Communication", "Stakeholder"], "Talent Acquisition Associate"),
+            ("HR Operations Variant", ["Human Resources", "Process", "Compliance"], "HR Operations Associate"),
+            ("People Success Variant", ["Engagement", "Communication", "Teamwork"], "People Operations Associate"),
+        ],
+    }
+    default_tracks = [
         ("Backend Variant", ["Python", "FastAPI", "SQL", "API", "AWS"], "Backend Engineer"),
         ("Data Variant", ["Python", "SQL", "Analytics", "Dashboard", "ETL"], "Data Analyst"),
         ("Product Variant", ["Communication", "Stakeholder", "Ownership", "Prioritization"], "Product Associate"),
     ]
+    tracks = role_tracks.get(role_family, default_tracks)
+
     for name, focus, role in tracks:
-        focused = [s for s in tech if s.lower() in {f.lower() for f in focus}] or focus[:4]
+        focused = [s for s in skills if s.lower() in {f.lower() for f in focus}] or focus[:4]
         variants.append({
             "variant_name": name,
             "headline": f"{role} Candidate ({role_title} alignment)",

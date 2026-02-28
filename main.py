@@ -17,6 +17,7 @@ from services.ai_service import (
     generate_career_roadmap,
     generate_interview_questions,
     evaluate_answer,
+    get_matched_skills,
     generate_resume_reference,
     format_resume_reference,
     build_resume_intelligence,
@@ -107,25 +108,37 @@ async def upload_and_analyze(
 ):
     file_bytes = await file.read()
     resume_text = extract_text_from_pdf(file_bytes)
+    if not resume_text or not resume_text.strip():
+        return {
+            "match_score": 0,
+            "match_explanation": "Could not extract text from the uploaded resume PDF. If this is a scanned/image PDF, upload a text-based PDF.",
+            "confidence": 0,
+            "matched_skills": [],
+            "missing_skills": [],
+            "improvement_suggestions": ["Upload a selectable-text PDF resume for accurate analysis."],
+            "career_roadmap": ["Re-upload resume in text-based PDF format and try again."],
+            "hireability_status": "NEEDS IMPROVEMENT",
+            "recruiter_decision": "Resume parsing failed",
+            "interview_questions": ["Tell me about yourself."],
+        }
 
     resume_data = await analyze_resume(resume_text)
     job_data = await analyze_job(job)
+    role_title = job_data.get("role_title", "Target Role")
+    role_family = job_data.get("role_family", "general")
 
     match_score = calculate_match(resume_data, job_data)
     explanation_data = await generate_explanation(match_score)
 
     missing_skills = detect_skill_gap(resume_data, job_data)
-    suggestions = generate_improvement_suggestions(missing_skills)
-    roadmap = generate_career_roadmap(missing_skills)
+    suggestions = generate_improvement_suggestions(missing_skills, role_title=role_title)
+    roadmap = generate_career_roadmap(missing_skills, role_title=role_title)
 
-    matched_skills = list(
-        set(resume_data["skills"]).intersection(
-            set(job_data["required_skills"])
-        )
-    )
+    matched_skills = get_matched_skills(resume_data, job_data)
 
     # ⭐ Interview Questions Generated
-    questions = generate_interview_questions(matched_skills)
+    question_seed = matched_skills if matched_skills else job_data.get("required_skills", [])
+    questions = generate_interview_questions(question_seed, role_title=role_title, role_family=role_family)
 
     if match_score >= 85:
         hireability = "🔥 TOP CANDIDATE"
@@ -138,6 +151,8 @@ async def upload_and_analyze(
         recruiter_decision = "Needs Training Before Hiring"
 
     return {
+        "role_title": role_title,
+        "role_family": role_family,
         "match_score": match_score,
         "match_explanation": explanation_data["match_explanation"],
         "confidence": explanation_data["confidence"],
